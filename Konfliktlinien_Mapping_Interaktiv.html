@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Konfliktlinien-Mapping interaktiv — Wald wirkt. Auch in der Stadt.</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ===========================================================
+     Interaktive Version A2 quer mit Pop-ups
+     Map aspect 6441:3699 ≈ 1.741
+     A2 quer 594×420mm
+     =========================================================== */
+  :root{
+    --ink:#1f1e1d; --ink-soft:#3d3d3a; --ink-mute:#6b6a66;
+    --paper:#fdfcfa; --rule:rgba(31,30,29,.18);
+    --forst:#3b6d11; --behoerde:#185fa5; --buerger:#854f0b;
+    --privat:#5f5e5a; --koop:#0f6e56;
+    --konflikt-stark:#b84538; --konflikt-mittel:#c97a2e;
+    --koop-line:#3f7a48; --kommunikation:#d4a017; --zone:#1a3a6e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:#e8e7e2; color:var(--ink); font-family:'Inter', system-ui, sans-serif; }
+  .page{
+    width:594mm; max-width:100%; aspect-ratio:594/420;
+    background:var(--paper);
+    margin:24px auto; box-shadow:0 8px 40px rgba(0,0,0,.08);
+    position:relative; overflow:hidden;
+    padding:10mm 10mm 5mm 10mm;
+    display:grid; grid-template-rows: 1fr auto; gap:5mm;
+  }
+
+  /* MAP STAGE */
+  .stage{
+    position:relative; width:100%; height:100%;
+    background:#fff; border:.4pt solid var(--rule);
+    overflow:hidden;
+  }
+  .map-bg{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; user-select:none; -webkit-user-drag:none;
+    pointer-events:none;
+  }
+  .net-svg{
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  .net-svg .edge-hit{ pointer-events:stroke; cursor:pointer; }
+
+  .pins, .zones-layer, .edge-labels{
+    position:absolute; inset:0; pointer-events:none;
+  }
+  .pins > *, .zones-layer > *, .edge-labels > *{ pointer-events:auto; }
+
+  /* PIN */
+  .pin{
+    position:absolute; transform:translate(-50%,-50%);
+    cursor:pointer; user-select:none; touch-action:manipulation;
+    padding:6px 11px; border-radius:7px;
+    border:1.2px solid; background:rgba(255,255,255,.96);
+    box-shadow:0 1px 0 rgba(0,0,0,.05), 0 2px 6px rgba(0,0,0,.10);
+    font-size:13.5px; line-height:1.2; text-align:center; white-space:nowrap;
+    z-index:10; transition:transform .12s ease, box-shadow .12s ease;
+  }
+  .pin:hover{ transform:translate(-50%,-50%) scale(1.06); box-shadow:0 4px 14px rgba(0,0,0,.18); z-index:99; }
+  .pin .name{ font-weight:600; font-size:14.5px; }
+  .pin .sub{ font-weight:400; font-size:12px; opacity:.85; margin-top:2px; }
+  .pin.forst{ background:#eaf3de; border-color:var(--forst); }
+  .pin.forst .name{ color:#27500a; } .pin.forst .sub{ color:var(--forst); }
+  .pin.behoerde{ background:#e6f1fb; border-color:var(--behoerde); }
+  .pin.behoerde .name{ color:#0c447c; } .pin.behoerde .sub{ color:var(--behoerde); }
+  .pin.buerger{ background:#faeeda; border-color:var(--buerger); }
+  .pin.buerger .name{ color:#633806; } .pin.buerger .sub{ color:var(--buerger); }
+  .pin.privat{ background:#f1efe8; border-color:var(--privat); }
+  .pin.privat .name{ color:#444441; } .pin.privat .sub{ color:var(--privat); }
+  .pin.koop{ background:#e1f5ee; border-color:var(--koop); }
+  .pin.koop .name{ color:#085041; } .pin.koop .sub{ color:var(--koop); }
+
+  /* EDGE LABEL */
+  .edge-label{
+    position:absolute; transform:translate(-50%,-50%);
+    background:rgba(253,252,250,.96); border:.5pt solid rgba(0,0,0,.08);
+    padding:3px 8px; border-radius:4px; font-size:13px; line-height:1.2;
+    white-space:nowrap; z-index:6; cursor:pointer; user-select:none;
+    box-shadow:0 1px 2px rgba(0,0,0,.05); font-weight:500;
+    transition:transform .12s ease, box-shadow .12s ease;
+  }
+  .edge-label:hover{ transform:translate(-50%,-50%) scale(1.08); box-shadow:0 3px 10px rgba(0,0,0,.15); }
+  .edge-label.italic{ font-style:italic; }
+  .edge-label.stark{ color:var(--konflikt-stark); }
+  .edge-label.mittel{ color:var(--konflikt-mittel); }
+  .edge-label.komm{ color:var(--kommunikation); }
+  .edge-label.koop{ color:var(--koop-line); }
+
+  /* ZONES */
+  .zone-label{
+    position:absolute; transform:translate(-50%,-50%);
+    z-index:8; font-family:'JetBrains Mono',monospace;
+    font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--zone); font-weight:600; text-align:center;
+    user-select:none; pointer-events:none;
+    background:rgba(253,252,250,.92); padding:3px 7px; border-radius:4px;
+    border:.5pt dashed rgba(26,58,110,.45);
+  }
+  .zone-label .sub{
+    display:block; font-family:'Inter',sans-serif; font-size:10.5px;
+    letter-spacing:0; text-transform:none; font-style:italic;
+    font-weight:400; margin-top:2px; opacity:.85;
+  }
+
+  /* HINT BANNER */
+  .hint-banner{
+    position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    background:rgba(31,30,29,.88); color:#fff;
+    padding:6px 14px; border-radius:5px;
+    font-family:'JetBrains Mono',monospace; font-size:10.5px;
+    letter-spacing:.06em; z-index:200; pointer-events:none;
+    box-shadow:0 2px 8px rgba(0,0,0,.18);
+  }
+
+  /* LEGEND BAR (below map) */
+  .legend-bar{
+    display:grid;
+    grid-template-columns: 1.4fr 1fr auto;
+    gap:8mm;
+    padding:4mm 3mm 0 3mm;
+    align-items:start;
+    border-top:.4pt solid var(--rule);
+  }
+  .legend-bar h1{
+    margin:0 0 1.5mm 0; font-weight:500; font-size:22pt; letter-spacing:-.01em;
+  }
+  .legend-bar .subtitle{
+    margin:0; font-size:12pt; color:var(--ink-soft); font-weight:300; line-height:1.4;
+    max-width:200mm;
+  }
+  .legend-bar .eyebrow{
+    margin:0 0 2mm 0; font-family:'JetBrains Mono',monospace;
+    font-size:10pt; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-mute);
+  }
+  .legend-block h4{
+    margin:0 0 2mm 0; font-family:'JetBrains Mono',monospace;
+    font-size:9.5pt; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-mute); font-weight:500;
+  }
+  .legend-row{ display:flex; align-items:center; gap:3mm; font-size:11.5pt; color:var(--ink-soft); margin-bottom:2mm; }
+  .legend-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0 8mm; }
+  .swatch{ width:18px; height:18px; border-radius:3px; border:1.2px solid; }
+  .line-key{ width:30px; height:0; }
+  .source{
+    text-align:right; font-family:'JetBrains Mono',monospace;
+    font-size:10pt; color:var(--ink-mute); line-height:1.6; letter-spacing:.04em;
+  }
+  .source .strong{ color:var(--ink-soft); font-weight:500; }
+
+  /* MODAL / POPUP */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(15,15,12,.55);
+    backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
+    z-index:1000; display:none; align-items:flex-start; justify-content:center;
+    padding:32px 16px; overflow-y:auto;
+  }
+  .modal-backdrop.show{ display:flex; }
+  .modal{
+    background:var(--paper); width:100%; max-width:780px;
+    border-radius:10px; box-shadow:0 24px 70px rgba(0,0,0,.35);
+    border:1px solid rgba(0,0,0,.06);
+    overflow:hidden;
+    animation: modal-in .25s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes modal-in {
+    from { opacity:0; transform:translateY(12px) scale(.985); }
+    to { opacity:1; transform:translateY(0) scale(1); }
+  }
+  .modal-head{
+    padding:18px 24px 14px 24px;
+    border-bottom:1px solid var(--rule);
+    display:flex; align-items:flex-start; gap:14px; justify-content:space-between;
+  }
+  .modal-head .tag{
+    display:inline-block; font-family:'JetBrains Mono',monospace;
+    font-size:9.5pt; letter-spacing:.18em; text-transform:uppercase;
+    padding:2px 8px; border-radius:3px; margin-bottom:6px;
+    background:rgba(0,0,0,.05); color:var(--ink-mute);
+  }
+  .modal-head h2{ margin:0; font-weight:600; font-size:20pt; line-height:1.2; }
+  .modal-head .role{ margin:3px 0 0 0; color:var(--ink-soft); font-size:12pt; font-weight:400; }
+  .modal-close{
+    background:transparent; border:none; cursor:pointer;
+    width:34px; height:34px; border-radius:50%;
+    color:var(--ink-soft); font-size:22px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .modal-close:hover{ background:rgba(0,0,0,.06); color:var(--ink); }
+  .modal-body{ padding:18px 24px 24px 24px; }
+  .modal-body p{ margin:0 0 12px 0; font-size:11.5pt; line-height:1.55; color:var(--ink-soft); }
+  .modal-body h3{
+    margin:18px 0 8px 0; font-size:9.5pt; font-weight:600;
+    font-family:'JetBrains Mono',monospace;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--ink-mute);
+  }
+  .modal-body h3:first-child{ margin-top:0; }
+  .quote{
+    border-left:3pt solid var(--konflikt-stark);
+    padding:6px 14px; margin:10px 0;
+    background:rgba(184,69,56,.04);
+    font-size:11pt; line-height:1.5; color:var(--ink); font-style:italic;
+  }
+  .quote.koop{ border-color:var(--koop-line); background:rgba(63,122,72,.06); }
+  .quote.komm{ border-color:var(--kommunikation); background:rgba(212,160,23,.06); }
+  .quote.mittel{ border-color:var(--konflikt-mittel); background:rgba(201,122,46,.06); }
+  .quote.neutral{ border-color:var(--ink-mute); background:rgba(0,0,0,.03); }
+  .quote .src{
+    display:block; margin-top:6px; font-style:normal;
+    font-family:'JetBrains Mono',monospace;
+    font-size:9pt; color:var(--ink-mute); letter-spacing:.04em;
+  }
+  .modal-body ul.sources{
+    list-style:none; padding:0; margin:0;
+    font-size:10pt; line-height:1.5;
+  }
+  .modal-body ul.sources li{
+    padding:6px 0 6px 18px; border-top:1px solid var(--rule);
+    color:var(--ink-soft); position:relative;
+  }
+  .modal-body ul.sources li:first-child{ border-top:none; }
+  .modal-body ul.sources li::before{
+    content:"›"; position:absolute; left:0; top:6px; color:var(--ink-mute);
+  }
+  .modal-body ul.sources a{
+    color:var(--behoerde); text-decoration:none; word-break:break-all;
+  }
+  .modal-body ul.sources a:hover{ text-decoration:underline; }
+  .badge-row{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .badge{
+    display:inline-block; padding:2px 8px; border-radius:11px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:8.5pt; letter-spacing:.08em;
+    background:rgba(0,0,0,.05); color:var(--ink-soft);
+  }
+  .badge.stark{ background:rgba(184,69,56,.12); color:#7e2c23; }
+  .badge.mittel{ background:rgba(201,122,46,.13); color:#7e4810; }
+  .badge.komm{ background:rgba(212,160,23,.16); color:#806010; }
+  .badge.koop{ background:rgba(63,122,72,.14); color:#1f4f29; }
+  .note{
+    margin-top:14px; padding:10px 12px; background:#f4efe2;
+    border-left:3pt solid var(--kommunikation);
+    border-radius:4px; font-size:10pt; color:var(--ink-soft); line-height:1.5;
+  }
+
+  /* PRINT */
+  @page{ size: A2 landscape; margin: 0; }
+  @media print{
+    html,body{ background:#fff; }
+    .page{ margin:0; box-shadow:none; aspect-ratio:auto; height:420mm; width:594mm; }
+    .hint-banner{ display:none !important; }
+    .pin{ box-shadow:none; cursor:default; }
+    .zone-label{ border-color:transparent; background:transparent; }
+    .edge-label{ background:rgba(255,255,255,.95); cursor:default; }
+    .modal-backdrop{ display:none !important; }
+  }
+
+  /* small responsive: shrink for screens */
+  @media (max-width: 1400px){
+    .page{ width:1300px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============== MAP STAGE ============== -->
+  <div class="stage" id="stage">
+    <img class="map-bg" src="assets/Karte_Biel.png" alt="Karte Biel" />
+
+    <div class="hint-banner">Klick auf Akteure und Konfliktlinien für Details, Zitate und Quellen</div>
+
+    <!-- SVG: zones (back), edges, edge hit areas -->
+    <svg class="net-svg" viewBox="0 0 1000 574" preserveAspectRatio="none" id="net">
+      <defs>
+        <marker id="arrow-komm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M2 1 L8 5 L2 9" fill="none" stroke="#d4a017" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+      <g id="zones-svg"></g>
+      <g id="edges" fill="none" stroke-linecap="round"></g>
+      <g id="edges-hit" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round"></g>
+    </svg>
+
+    <!-- HTML overlays -->
+    <div class="zones-layer" id="zones-layer"></div>
+    <div class="edge-labels" id="edge-labels"></div>
+    <div class="pins" id="pins-layer"></div>
+  </div>
+
+  <!-- ============== LEGEND BAR ============== -->
+  <div class="legend-bar">
+    <div>
+      <p class="eyebrow">PA1 · BFH Biel · FS 2026</p>
+      <h1>Konfliktlinien-Mapping zur Waldnutzung im Raum Biel</h1>
+      <p class="subtitle">Akteurs-Netzwerk zur Waldnutzung im Raum Biel/Bienne. Dargestellt sind die zentralen Konflikt- und Kooperationsbeziehungen zwischen Waldakteuren, Behörden und Bevölkerung. Datengrundlage: 5 qualitative Experteninterviews (IP1–IP5), 126 Codierungen in 36 Subkategorien. <strong>Interaktive Version:</strong> Akteure und Konfliktlinien anklicken für Beschreibung, Originalzitate und Quellenangaben.</p>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6mm 10mm;">
+      <div class="legend-block">
+        <h4>Beziehungstypen</h4>
+        <div class="legend-row"><span class="line-key" style="border-top:3pt solid var(--konflikt-stark);"></span>Starker Konflikt</div>
+        <div class="legend-row"><span class="line-key" style="border-top:2pt solid var(--konflikt-mittel);"></span>Mittlerer Konflikt</div>
+        <div class="legend-row"><span class="line-key" style="border-top:1.6pt dashed var(--kommunikation);"></span>Fehlgeleitete Kommunikation</div>
+        <div class="legend-row"><span class="line-key" style="border-top:1.6pt dashed var(--koop-line);"></span>Kooperation</div>
+      </div>
+      <div class="legend-block">
+        <h4>Akteurstypen</h4>
+        <div class="legend-grid">
+          <div class="legend-row"><span class="swatch" style="background:#eaf3de; border-color:var(--forst);"></span>Forst / Eigentümer</div>
+          <div class="legend-row"><span class="swatch" style="background:#e6f1fb; border-color:var(--behoerde);"></span>Behörde</div>
+          <div class="legend-row"><span class="swatch" style="background:#faeeda; border-color:var(--buerger);"></span>Bevölkerung</div>
+          <div class="legend-row"><span class="swatch" style="background:#f1efe8; border-color:var(--privat);"></span>Privatwirtschaft</div>
+          <div class="legend-row"><span class="swatch" style="background:#e1f5ee; border-color:var(--koop);"></span>Kooperation</div>
+          <div class="legend-row"><span class="swatch" style="background:rgba(26,58,110,.12); border-color:rgba(26,58,110,.75); border-style:dashed;"></span>Konfliktzone</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="source">
+      <div class="strong">Wald wirkt. Auch in der Stadt.</div>
+      <div>Koukoui &amp; Wey</div>
+      <div>BFH AHB Biel/Bienne · 2026</div>
+      <div style="margin-top:2mm;">Hintergrund: Stadtplan Biel/Bienne, Stadt Biel · MapPlus, abgerufen 7.5.2026,<br>biel-bienne.mapplus.ch</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MODAL ===================== -->
+<div class="modal-backdrop" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+  <div class="modal" id="modal-card">
+    <div class="modal-head">
+      <div>
+        <span class="tag" id="modal-tag">AKTEUR</span>
+        <h2 id="modal-title">—</h2>
+        <p class="role" id="modal-role"></p>
+        <div class="badge-row" id="modal-badges"></div>
+      </div>
+      <button class="modal-close" id="modal-close" aria-label="Schliessen">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const VB_W = 1000, VB_H = 574;
+  const stage = document.getElementById('stage');
+  const pinsLayer = document.getElementById('pins-layer');
+  const edgesG = document.getElementById('edges');
+  const edgesHit = document.getElementById('edges-hit');
+  const edgeLabelsEl = document.getElementById('edge-labels');
+  const zonesSvg = document.getElementById('zones-svg');
+  const zonesLayer = document.getElementById('zones-layer');
+
+  // ===== STATE (Default-Layout aus A2-Druckversion) =====
+  const STATE = {
+    pins: {
+      staatsforst:    { x:42.37, y:87.22, type:'forst',    name:'Staatsforstbetrieb', sub:'Kanton Bern · Längholz' },
+      burgergemeinde: { x:49.61, y:19.34, type:'forst',    name:'Burgergemeinde Biel', sub:'1 650 ha Wald' },
+      amt:            { x:91.79, y:23.29, type:'behoerde', name:'Amt für Wald', sub:'Kanton Bern · Regulator' },
+      bevoelkerung:   { x:53.27, y:53.94, type:'buerger',  name:'Bevölkerung Biel', sub:'Erholung · Petition 1 300+' },
+      stadt:          { x:24.22, y:52.91, type:'behoerde', name:'Stadt Biel', sub:'strukturelle Leerstelle' },
+      quartier_mett:  { x:55.86, y:66.97, type:'buerger',  name:'Quartier Mett', sub:'>10 000 Einw.' },
+      kiesgrube:      { x:91.46, y:69.43, type:'privat',   name:'Kiesgrube', sub:'200 LKW/Tag' },
+      bg_safnern:     { x:73.55, y:81.66, type:'forst',    name:'Burgergemeinde Safnern', sub:'Eigentümerin Büttenberg-Wald' },
+      safnern:        { x:85.58, y:96.09, type:'behoerde', name:'Gemeinde Safnern', sub:'≈2 000 Einw.' }
+    },
+    edges: [
+      { id:'e1', from:'staatsforst', to:'bevoelkerung', style:'stark', label:'Holzschlag vs. Erholung', italic:false, bend:0 },
+      { id:'e2', from:'bg_safnern', to:'quartier_mett', style:'stark', label:'Pacht kassiert, Wald nicht geschützt', italic:false, bend:0 },
+      { id:'e3', from:'amt', to:'quartier_mett', style:'stark', label:'Rodungsverbot vs. 20 ha Rodung', italic:false, bend:0 },
+      { id:'e9', from:'kiesgrube', to:'bg_safnern', style:'koop', label:'Pacht', italic:false, bend:-38.02 },
+      { id:'e12', from:'quartier_mett', to:'kiesgrube', style:'stark', label:'200 LKW/Tag', italic:false, bend:-80.19 },
+      { id:'e13', from:'kiesgrube', to:'safnern', style:'koop', label:'Steuereinnahmen', italic:false, bend:0 },
+      { id:'e4', from:'bevoelkerung', to:'burgergemeinde', style:'mittel', label:'Misstrauen', italic:true, bend:0 },
+      { id:'e5', from:'quartier_mett', to:'safnern', style:'mittel', label:'Machtgefälle', italic:false, bend:86.56 },
+      { id:'e6', from:'bevoelkerung', to:'stadt', style:'komm', label:'«Ihr seid zuständig!»', italic:true, bend:-135.91, arrow:true },
+      { id:'e7', from:'stadt', to:'burgergemeinde', style:'komm', label:'verweist weiter', italic:true, bend:0, arrow:true },
+      { id:'e10', from:'stadt', to:'staatsforst', style:'komm', label:'verweist weiter', italic:true, bend:58.53, arrow:true },
+      { id:'e11', from:'stadt', to:'amt', style:'komm', label:'verweist weiter', italic:true, bend:0, arrow:true }
+    ],
+    zones: {
+      laengholz:  { cx:46.80, cy:80.52, rx:11.17, ry:17.08, lx:51.47, ly:93.54, title:'Zone 1 · Längholz', sub:'Femelschläge · Petition 1 300+' },
+      buettenberg:{ cx:76.83, cy:74.34, rx:18.45, ry:14.59, lx:91.77, ly:59.07, title:'Zone 2 · Büttenberg / Mett', sub:'Kiesgrube · 200 LKW · 20 ha' }
+    }
+  };
+
+  // ===== INFO-DATEN: Akteure (Beschreibung, Zitate, Quellen) =====
+  const ACTOR_INFO = {
+    staatsforst: {
+      title: 'Staatsforstbetrieb',
+      role: 'Kantonaler Forstbetrieb · Bewirtschafter Längholz',
+      tag: 'FORST / EIGENTÜMER',
+      description: 'Der Staatsforstbetrieb Bern bewirtschaftet im Auftrag des Regierungsrats zentrale Partien des Längholzwaldes. Er hat keinen eigenen Wald in Stadtnähe verkauft, sondern führt die Bewirtschaftung im Staatswald aus. Seit rund sechs Jahren wird die Bevölkerung über Holzschläge proaktiv informiert (Baustellenkommunikation mit Tafeln, QR-Codes, Waldrundgängen).',
+      quotes: [
+        { text: 'Der Wald ist für den Staatsforstbetrieb Wirtschaftsgrundlage. Wir verstehen den Wald aber auch als Ökosystem. Ein Ökosystem, das gesund erhalten bleiben muss, damit die Wirtschaftsgrundlage weiterhin erhalten bleibt. […] Wirtschaftlich, ökologisch, sozial hat der Wald eine starke Bedeutung für uns.', src:'IP1, Z. 11', cls:'neutral' },
+        { text: 'Wir haben vor rund sechs Jahren begonnen zu kommunizieren – das war sicher höchste Zeit. Wir machen es jetzt so, dass wir vor allem Holzschläge nutzen, wir sagen dem Baustellenkommunikation. Das fällt auf, das sieht man, das ist laut, dass wir da eben mit Plakaten, mit Waldrundgängen in dicht besiedelten Orten die Bevölkerung informieren.', src:'IP1, Z. 49', cls:'neutral' },
+        { text: 'Wenn wir nicht kommunizieren und wir nicht informieren, dann wird es am Schluss diese Minderheit, diese kleine Gruppe, am Schluss auch den Rest der Bevölkerung, der eigentlich bisher zufrieden ist, für sich gewinnen können.', src:'IP1, Z. 85', cls:'neutral' }
+      ],
+      sources: [
+        { text:'Hegetschweiler, T., Salak, B., Wunderlich, A. C., Bauer, N., & Hunziker, M. (2022). Das Verhältnis der Schweizer Bevölkerung zum Wald. Waldmonitoring soziokulturell WaMos3. WSL-Berichte Bd. 120.', url:'https://doi.org/10.55419/wsl:29973' },
+        { text:'Mühlethaler, U. (2022). Der Fachmann mit der Spraydose. Replik zum Leserbrief vom 1.12.2022. Bieler Tagblatt.', url:'https://www.um-services.ch/wp-content/uploads/2023/03/20221206_Der-Fachmann-mit-der-Spraydose.pdf' }
+      ]
+    },
+
+    burgergemeinde: {
+      title: 'Burgergemeinde Biel',
+      role: 'Grösste Waldeigentümerin der Region · ca. 1 650 ha Wald',
+      tag: 'FORST / EIGENTÜMER',
+      description: 'Die Burgergemeinde Biel ist die grösste Waldeigentümerin im Raum Biel. Der Waldbesitz ist identitätsstiftend, wirtschaftlich aber defizitär. Sie setzt auf Dauerwaldbewirtschaftung statt Kahlschläge. Kommunikation erfolgt eher reaktiv – Informationstafeln, Internetseite, Burgerbummel und Behördenbegänge.',
+      quotes: [
+        { text: 'Der Waldbesitz ist für die Burgergemeinde Biel bedeutend, nicht primär aus wirtschaftlicher Sicht, aber er bildet die Basis des Verständnisses, warum die Burgergemeinde Biel existiert. Bereits flächenmässig ist er mit rund 3000 Hektar bedeutend. Wirtschaftlich ist die Waldbewirtschaftung schweizweit defizitär.', src:'IP3, Z. 11', cls:'neutral' },
+        { text: 'Wir haben versucht, [die Naturbelassenheit] umzusetzen, indem wir auf Dauerwaldbewirtschaftung umgestellt haben. Das heisst, wir machen keine Kahlschläge […] Für das Auge der Bevölkerung, für die Joggerinnen und Jogger, für alle, die den Wald nutzen, bleibt der Eindruck eines stehenden Waldes erhalten – ein klarer Unterschied zum Kahlschlag.', src:'IP3, Z. 30–31', cls:'neutral' },
+        { text: 'Eine Mehrheit akzeptiert oder kann verstehen, was im Wald geschieht. Dann gibt es eine Minderheit, die das Ganze ablehnt. […] sie ist sehr aktiv, weil sie überzeugt ist, dass wir gegen die Natur arbeiten. Diese Akteure werden zum Teil sehr laut.', src:'IP3, Z. 69', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Ranacher, L., & Stern, T. (2016). Forest Management or Greed of Gain? An Information Experiment on Peri-Urban Forest Visitors’ Attitudes Regarding Harvesting Operations. Urban Forestry & Urban Greening, 15, 89–96.', url:'https://doi.org/10.1016/j.ufug.2015.11.007' },
+        { text:'Hegetschweiler et al. (2022). Waldmonitoring soziokulturell WaMos3. WSL-Berichte Bd. 120.', url:'https://doi.org/10.55419/wsl:29973' }
+      ]
+    },
+
+    amt: {
+      title: 'Amt für Wald (Kanton Bern)',
+      role: 'Kantonale Behörde · Regulator',
+      tag: 'BEHÖRDE',
+      description: 'Das Amt für Wald und Naturgefahren des Kantons Bern ist der regulatorische Gatekeeper. Es hat den Auftrag für das Besucherlenkungskonzept Längholz vergeben und hat im Konflikt um den Büttenberg eine Alternativstrasse zur Kiesgrube wegen Rodungsverbot abgelehnt – während gleichzeitig eine Erweiterung der Kiesgrube genehmigt wurde, die ca. 20 ha Wald rodet. Aus Sicht des Quartiers Mett entsteht so der Eindruck einer widersprüchlichen Schutzanwendung.',
+      quotes: [
+        { text: 'Wir haben gefordert, dass eine alternative Strasse gebaut wird, die nicht durch Mett oder durchs Dorf führt und direkt an der Autobahn anschliesst. Das Amt für Wald des Kantons Bern hat sich aber dem entgegengestellt. Sie haben gesagt, man dürfe nicht roden, um diese Strasse zu bauen. Sie schützen den Wald gegen uns, aber zugunsten der Kiesgrube schützen sie den Wald nicht.', src:'IP5, Z. 60', cls:'stark' },
+        { text: 'Jetzt im Längholzwald wurde das Amt für Wald damit beauftragt, ein Besucherlenkungskonzept zu erstellen. Ich denke, dass an bevölkerungsdichten Orten immer mehr so ein Besucherlenkungskonzept dazu führen soll, dass diese Nutzungskonflikte zwischen den Waldbesuchern abnimmt.', src:'IP1, Z. 65', cls:'neutral' }
+      ],
+      sources: [
+        { text:'Amt für Wald und Naturgefahren des Kantons Bern (2023). Regionaler Waldplan Seeland–Biel/Bienne. Pilot der zweiten Generation.', url:'https://www.weu.be.ch/content/dam/weu/dokumente/awn/de/rwp-2/RWP-2,%20Seeland-Biel-Bienne,%20genehmigt%20und%20publiziert,%20DE.pdf' },
+        { text:'Aktuelle regionale Waldpläne Kanton Bern.', url:'https://www.weu.be.ch/de/start/themen/umwelt/wald/regionale-waldplaene/aktuelle-regionale-waldplaene.html' },
+        { text:'Kanton Bern (2025). Antwort auf die «3. Petition Längholz-Wald Biel: Abholzung so nicht!» Medienmitteilung.', url:'https://www.be.ch/de/start/dienstleistungen/medien/medienmitteilungen.html?newsID=23f72c05-96d5-420f-9c44-169c0a5e0f46' }
+      ]
+    },
+
+    bevoelkerung: {
+      title: 'Bevölkerung Biel',
+      role: 'Erholungssuchende · Petitionierende · Quartierbevölkerung',
+      tag: 'BEVÖLKERUNG',
+      description: 'Die Bieler Bevölkerung nutzt den Längholzwald primär als Naherholungsraum. Sie erwartet ästhetisch stabilen, „naturbelassenen“ Wald. Drei Petitionen 2023–2025 (eine mit über 1 300 Unterschriften) richten sich gegen Femelschläge im Längholz. Aus Sicht der Forstbetriebe handelt es sich um eine «aktive Minderheit»; aus Sicht von IP5 um die Stimme einer schweigenden Mehrheit ohne Zeit, sich politisch zu artikulieren.',
+      quotes: [
+        { text: 'Es gibt im Prinzip viele Erwartungen an den Wald, die jedem Einzelnen nicht bewusst sind. […] Erwartungen, die geäussert werden, die wir zum Teil vielleicht auch nicht so erfüllen, sind Erwartungen an einen schönen Wald. […] Es gibt Erwartungen eben vor allem ästhetischer Natur. Und es gibt aber wenig Wissen über die Zusammenhänge dann im Wald.', src:'IP1, Z. 25', cls:'neutral' },
+        { text: 'Aber die Mehrheit der Leute hätte vielleicht auch diese Meinung, sie haben aber keine Zeit. Sie arbeiten. Diese kleinen Gruppen sind laut, aber ich glaube nicht, dass es nur kleine Gruppen sind. Es sind die Gruppen, die sich für die Anliegen einsetzen. Aber viele andere Leute denken vielleicht ähnlich.', src:'IP5, Z. 34', cls:'mittel' },
+        { text: 'Im Längholz eher schlecht. Mit Ängsten, dass grosse Holzschläge passieren und dass man dann für eine ganze Generation keinen Wald mehr hat, in dem man sich im Schatten kühlen kann.', src:'IP4, Z. 32', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Konfliktzone Wald — 700 Bäume sollen gefällt werden – Bevölkerung in Biel wehrt sich. SRF News.', url:'https://www.srf.ch/news/schweiz/konfliktzone-wald-700-baeume-sollen-gefaellt-werden-bevoelkerung-in-biel-wehrt-sich' },
+        { text:'Umfrage: Stadt will Nutzung des Längholzwalds klären. BärnerBär.', url:'https://baernerbaer.ch/ort/bielbienne/umfrage-stadt-will-nutzung-des-langholzwalds-klaren-67124009' },
+        { text:'Kanton Bern (2025). Antwort auf die «3. Petition Längholz-Wald Biel».', url:'https://www.be.ch/de/start/dienstleistungen/medien/medienmitteilungen.html?newsID=23f72c05-96d5-420f-9c44-169c0a5e0f46' },
+        { text:'Hegetschweiler et al. (2022). WaMos3 – Verhältnis der Schweizer Bevölkerung zum Wald. WSL.', url:'https://doi.org/10.55419/wsl:29973' }
+      ]
+    },
+
+    stadt: {
+      title: 'Stadt Biel',
+      role: 'Kommune · vermittelnde Instanz ohne eigenen Wald',
+      tag: 'BEHÖRDE',
+      description: 'Die Stadt Biel besitzt praktisch keinen eigenen Wald (nur ein kleines Stück beim Friedhof Bärlet, Bestattungswald). Sie empfängt aber Beschwerden der Bevölkerung – obwohl sie weder Waldziele formuliert noch über Waldeigentum verfügt. Die Stadt verweist Anfragen meist an die jeweiligen Waldeigentümer weiter und erscheint im Mapping als strukturelle Leerstelle: «zuständig wahrgenommen», aber ohne Steuerungshebel.',
+      quotes: [
+        { text: 'Wenn eine Anfrage bezüglich Wald an die Stadt Biel kommt, wissen viele nicht, wem der Wald gehört. Viele denken, ein Grossteil im Längholz oder auch im Beaumont gehöre der Stadt – das ist aber nicht so. Wir verweisen deshalb immer auf den jeweiligen Waldeigentümer.', src:'IP4, Z. 69', cls:'komm' },
+        { text: 'Die Stadt hat selbst nur sehr wenig Wald und ist deshalb in der Waldbewirtschaftung kein grosser Player. Sie bewirtschaftet aber die Wanderwege – das ist gesetzlich so vorgegeben […]', src:'IP4, Z. 9', cls:'neutral' },
+        { text: 'Wir haben keine Rolle, wir sind nicht Eigentümerin und haben keinen Einfluss auf die Waldeigentümer und darauf, wie sie bewirtschaften. Deshalb spielt die Stadt höchstens eine beratende Rolle.', src:'IP4, Z. 57', cls:'komm' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' },
+        { text:'Umfrage: Stadt will Nutzung des Längholzwalds klären. BärnerBär.', url:'https://baernerbaer.ch/ort/bielbienne/umfrage-stadt-will-nutzung-des-langholzwalds-klaren-67124009' },
+        { text:'Wilkes-Allemann, J., Pütz, M., & Hirschi, C. (2015). Governance of Forest Recreation in Urban Areas. Environmental Policy and Governance, 25(2), 139–156.', url:'https://doi.org/10.1002/eet.1672' }
+      ]
+    },
+
+    quartier_mett: {
+      title: 'Quartier Mett (Quartierleist Mett-Geyisried)',
+      role: 'Stadtteil Biel · ≈10 000 Einwohnende · 50 % Ausländeranteil',
+      tag: 'BEVÖLKERUNG',
+      description: 'Mett ist ein bevölkerungsreicher, sozioökonomisch unterdurchschnittlich situierter Stadtteil von Biel mit hohem Migrationsanteil. Der Quartierleist Mett-Geyisried fühlt sich strukturell benachteiligt: Die Kiesgrube liegt formell auf Gemeindegebiet Safnern, doch 200 LKW pro Tag fahren durch den Büttenberg-Wald an Mett vorbei – inklusive zwei Schulen. Eine Einsprache wurde abgelehnt, eine Beschwerde läuft. Demokratisches Defizit: Quartier hat nur Einsprache, Safnern hat Gemeindeabstimmung.',
+      quotes: [
+        { text: 'Der ganze Wald wird jeden Tag von zweihundert Lastwagen befahren. […] Es ist keine offizielle Strasse, es gibt nichts, was das so erlaubt, aber es ist einfach Gewohnheit. Jetzt haben sie eine Erweiterung für die Kiesgrube für weitere dreissig Jahre genehmigt. […] Die Lastwagen verkehren an zwei Schulen vorbei. […] Die Leute fühlen sich verarscht.', src:'IP5, Z. 54–56', cls:'stark' },
+        { text: 'Es ist eine Frage der Macht. Die Leute in Mett haben keine Macht. Sie sind keine Eigentümer, sie sind Mieter, sie sind Ausländer, sie haben keine Stimme. […] Wir haben fünfzig Prozent Ausländer in Mett, sie haben kein Stimmrecht.', src:'IP5, Z. 51, 62', cls:'stark' },
+        { text: 'Wir sind nicht so gut repräsentiert wie eine Gemeinde wie Safnern. Safnern ist eine Gemeinde, sie haben einen Gemeinderat […] Aber wir sind ein Quartier. Die Kiesgrube liegt nicht auf unserem Land, und wir haben keine Stimme. […] Wir können nur eine Einsprache machen, und eine Einsprache ist viel schwächer als ein Ja oder Nein in einer Gemeindeabstimmung.', src:'IP5, Z. 65', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    kiesgrube: {
+      title: 'Kiesgrube Büttenberg',
+      role: 'Privatwirtschaft · Kies- und Betonproduktion',
+      tag: 'PRIVATWIRTSCHAFT',
+      description: 'Die Kiesgrube auf Gemeindegebiet Safnern wird seit Jahrzehnten betrieben und alle 30 Jahre erweitert. Die jüngste Erweiterung umfasst eine Rodung von ca. 20 ha Wald für weitere 30 Jahre Abbau. Rund 200 LKW pro Tag fahren durch den Büttenberg-Wald an Quartier Mett vorbei. Die Burgergemeinde Safnern erhält Pachtzins für die Waldfläche, die Gemeinde Safnern Steuereinnahmen.',
+      quotes: [
+        { text: 'Die neue Kiesgrube wird zwanzig Hektaren Wald roden. […] Man darf zwanzig Hektaren roden für die Beton- und Kiesindustrie, um eine Lösung für ihre Aktivitäten zu finden. Aber wenn wir eine Lösung suchen, die unser Quartier entlastet, dann muss man zehn Bäume unbedingt schützen. Das ist unlogisch.', src:'IP5, Z. 60, 62', cls:'stark' },
+        { text: 'Es wird immer versprochen, dass die Kiesgrube erschöpft sei und dass es fertig sei. Aber alle dreissig Jahre wird das verlängert.', src:'IP5, Z. 56', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    bg_safnern: {
+      title: 'Burgergemeinde Safnern',
+      role: 'Eigentümerin Büttenberg-Wald · Pachtempfängerin',
+      tag: 'FORST / EIGENTÜMER',
+      description: 'Die Burgergemeinde Safnern ist Eigentümerin des Waldes auf dem Büttenberg, auf dem die Kiesgrube und die zur Kiesgrube führende Waldstrasse liegen. Sie kassiert Pachteinnahmen für die genutzte Fläche. Aus Sicht des Quartiers Mett entsteht ein Glaubwürdigkeitsproblem: Sie verteidigt zwar rhetorisch den Schutz des Waldes, lässt aber gleichzeitig täglich 200 LKW durch ihn fahren.',
+      quotes: [
+        { text: '[Die Förster] machen das nicht, weil sie wahrscheinlich Geld bekommen. Sie sind Grundstücksbesitzer dort, wo die Kiesgrube ist, und bekommen Geld dafür. Dann setzen sie sich nicht dafür ein, dass der Wald wirklich ein Erholungsgebiet ist. Das ist auch ein Grund, weshalb die Leute ihnen nicht vertrauen. Sie sagen: «Sie sind nur fürs Geld da.»', src:'IP5, Z. 58', cls:'stark' },
+        { text: 'Da ist der Wald, die Förster machen nichts. Sie bekommen Geld, weil es auf ihrem Grundstück ist. Sie sagen, man müsse den Wald schützen, aber gleichzeitig verkehren zweihundert Lastwagen pro Tag durch den Wald. Sie verlieren an Glaubwürdigkeit.', src:'IP5, Z. 56', cls:'stark' }
+      ],
+      sources: [
+        { text:'Burgergemeinde Safnern (o. D.). Wald. burgergemeinde-safnern.ch.', url:'https://www.burgergemeinde-safnern.ch/wald/' },
+        { text:'Burgergemeinde Safnern (o. D.). Kiesgrube. burgergemeinde-safnern.ch.', url:'https://www.burgergemeinde-safnern.ch/kiesgrube/' },
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    safnern: {
+      title: 'Gemeinde Safnern',
+      role: 'Politische Gemeinde · ≈2 000 Einwohnende',
+      tag: 'BEHÖRDE',
+      description: 'Eigenständige Gemeinde im Berner Seeland mit eigener Gemeindeversammlung und damit direkter Entscheidungskompetenz über die Kiesgruben-Erweiterung. Sie profitiert von Steuereinnahmen aus der Kiesgrube. Aus Sicht des Quartiers Mett entsteht ein Demokratie-Defizit: Safnern entscheidet auf eigenem Gebiet, die Verkehrsbelastung trägt jedoch das nicht stimmberechtigte Quartier.',
+      quotes: [
+        { text: 'Safnern ist eine Gemeinde, sie haben einen Gemeinderat, sie sind sehr nah zur Gemeindeversammlung und können entscheiden: «Wollen wir die Kiesgrube oder nicht?» Aber wir sind ein Quartier. […] Sie haben das Geld von der Kiesgrube, und die Lasten werden zu uns geschoben.', src:'IP5, Z. 56, 65', cls:'stark' },
+        { text: 'Wir sind in Mett rund zehntausend Leute. Safnern hat zweitausend. Ein Sechstel oder ein Fünftel von Biel wohnt bei uns. […] Wir würden erwarten, dass die Autoritäten von Stadt und Kanton die Bevölkerung besser vertreten – und nicht nur die Wirtschaft.', src:'IP5, Z. 65, 67', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    }
+  };
+
+  // ===== INFO-DATEN: Konfliktlinien =====
+  const EDGE_INFO = {
+    e1: {
+      title: 'Holzschlag vs. Erholung',
+      role: 'Staatsforstbetrieb ↔ Bevölkerung Biel',
+      tag: 'STARKER KONFLIKT',
+      style: 'stark',
+      description: 'Zentraler Konflikt rund um den Längholzwald: Forstliche Eingriffe (Femelschläge zur Verjüngung von Lichtbaumarten, grössere Maschinen, Rückegassen) treffen auf eine ästhetisch und emotional aufgeladene Erholungserwartung. Drei Petitionen 2023–2025 belegen die Eskalation. Der Konflikt ist trotz Dialoggruppe nicht beigelegt.',
+      quotes: [
+        { text: 'Ja, eine Sache ist im Längholz. […] dieser Femelschlag betraf ein kleines Stück Wald, das mitten in der Stadt liegt. Wenn dort plötzlich die Waldbedeckung verschwindet, ist das konfliktiv, weil es ein sehr kleines Stück mit grosser Bedeutung für das Quartier ist.', src:'IP5, Z. 54', cls:'stark' },
+        { text: 'Im Längholz sehe ich die grössten Konfliktpotenziale. Da hat zweimal ein relativ grosser Holzschlag stattgefunden, das hat die Bevölkerung aufgewühlt. Es wurde politisiert, und der Konflikt ist trotz Dialoggruppe nicht beigelegt. Das ist der Brennpunkt, der grösste Konflikt.', src:'IP4, Z. 52', cls:'stark' },
+        { text: 'Also am meisten stört sich die Bevölkerung eigentlich an drei Dingen. Das sind grössere Räumungen, die wir machen, vor allem aufgrund oder zugunsten der Verjüngung von Lichtbaumarten. Das stört die Leute. Die Rückegassen stören die Leute und die grossen Maschinen.', src:'IP1, Z. 36', cls:'stark' }
+      ],
+      sources: [
+        { text:'Konfliktzone Wald — 700 Bäume sollen gefällt werden – Bevölkerung in Biel wehrt sich. SRF News.', url:'https://www.srf.ch/news/schweiz/konfliktzone-wald-700-baeume-sollen-gefaellt-werden-bevoelkerung-in-biel-wehrt-sich' },
+        { text:'Kanton Bern (2025). Antwort auf die «3. Petition Längholz-Wald Biel: Abholzung so nicht!» Medienmitteilung.', url:'https://www.be.ch/de/start/dienstleistungen/medien/medienmitteilungen.html?newsID=23f72c05-96d5-420f-9c44-169c0a5e0f46' },
+        { text:'Mühlethaler, U. (2022). Der Fachmann mit der Spraydose. Bieler Tagblatt.', url:'https://www.um-services.ch/wp-content/uploads/2023/03/20221206_Der-Fachmann-mit-der-Spraydose.pdf' },
+        { text:'Wilkes-Allemann, J., Pütz, M., Hirschi, C., & Fischer, C. (2015). Conflict Situations and Response Strategies in Urban Forests in Switzerland. Scandinavian Journal of Forest Research, 30(3), 204–216.', url:'https://doi.org/10.1080/02827581.2014.1002216' }
+      ]
+    },
+
+    e2: {
+      title: 'Pacht kassiert, Wald nicht geschützt',
+      role: 'Burgergemeinde Safnern ↔ Quartier Mett',
+      tag: 'STARKER KONFLIKT',
+      style: 'stark',
+      description: 'Glaubwürdigkeitsverlust: Die Burgergemeinde Safnern bezieht Pachteinnahmen für die Waldflächen rund um die Kiesgrube und lässt täglich 200 LKW durch ihren Wald rollen. Gleichzeitig argumentiert sie mit Waldschutz gegen die geforderte Alternativstrasse. Aus Quartierssicht entsteht eine Inkonsistenz, die das Vertrauen in den Akteur untergräbt.',
+      quotes: [
+        { text: 'Sie bekommen Geld, weil es auf ihrem Grundstück ist. Sie sagen, man müsse den Wald schützen, aber gleichzeitig verkehren zweihundert Lastwagen pro Tag durch den Wald. Sie verlieren an Glaubwürdigkeit.', src:'IP5, Z. 56', cls:'stark' },
+        { text: '[Die Förster] machen das nicht, weil sie wahrscheinlich Geld bekommen. […] Dann setzen sie sich nicht dafür ein, dass der Wald wirklich ein Erholungsgebiet ist. Das ist auch ein Grund, weshalb die Leute ihnen nicht vertrauen. Sie sagen: «Sie sind nur fürs Geld da.»', src:'IP5, Z. 58', cls:'stark' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ],
+    },
+
+    e3: {
+      title: 'Rodungsverbot vs. 20 ha Rodung',
+      role: 'Amt für Wald ↔ Quartier Mett',
+      tag: 'STARKER KONFLIKT',
+      style: 'stark',
+      description: 'Widersprüchliche Schutzanwendung: Das Amt für Wald lehnte den Bau einer Alternativstrasse durch den Wald ab und beruft sich auf das Rodungsverbot. Gleichzeitig wurde die Erweiterung der Kiesgrube genehmigt – mit ca. 20 ha Waldrodung. Aus Quartierssicht erscheint das Schutzkriterium selektiv und an den wirtschaftlich Stärksten angepasst.',
+      quotes: [
+        { text: 'Das Amt für Wald des Kantons Bern hat sich aber [der Alternativstrasse] entgegengestellt. Sie haben gesagt, man dürfe nicht roden, um diese Strasse zu bauen. Sie schützen den Wald gegen uns, aber zugunsten der Kiesgrube schützen sie den Wald nicht. Das ist ein Machtverhältnis zu unseren Lasten.', src:'IP5, Z. 60', cls:'stark' },
+        { text: 'Man darf zwanzig Hektaren roden für die Beton- und Kiesindustrie […]. Aber wenn wir eine Lösung suchen, die unser Quartier entlastet, dann muss man zehn Bäume unbedingt schützen. Das ist unlogisch.', src:'IP5, Z. 62', cls:'stark' }
+      ],
+      sources: [
+        { text:'Amt für Wald und Naturgefahren (2023). Regionaler Waldplan Seeland–Biel/Bienne.', url:'https://www.weu.be.ch/content/dam/weu/dokumente/awn/de/rwp-2/RWP-2,%20Seeland-Biel-Bienne,%20genehmigt%20und%20publiziert,%20DE.pdf' },
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    e9: {
+      title: 'Pacht (Waldfläche → Kiesabbau)',
+      role: 'Kiesgrube ↔ Burgergemeinde Safnern',
+      tag: 'KOOPERATION',
+      style: 'koop',
+      description: 'Wirtschaftliche Kooperation: Die Burgergemeinde Safnern verpachtet Waldflächen an den Kiesgrubenbetreiber für Abbau und Erschliessung. Die Pachteinnahmen sind ein wesentlicher Treiber für die Bewirtschaftungsentscheide – aus Sicht des Quartiers Mett entsteht daraus jedoch der Glaubwürdigkeitsverlust beim Schutzauftrag (siehe Konfliktlinie e2).',
+      quotes: [
+        { text: 'Sie bekommen Geld, weil es auf ihrem Grundstück ist. […] Sie sind Grundstücksbesitzer dort, wo die Kiesgrube ist, und bekommen Geld dafür.', src:'IP5, Z. 56, 58', cls:'koop' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ],
+    },
+
+    e12: {
+      title: '200 LKW/Tag durch Wald & Quartier',
+      role: 'Quartier Mett ↔ Kiesgrube',
+      tag: 'STARKER KONFLIKT',
+      style: 'stark',
+      description: 'Industrieverkehr durchquert täglich den Büttenberg-Wald und das Quartier Mett – an zwei Schulen vorbei. Die Strasse ist faktisch kein offiziell gewidmeter Verkehrsweg, sondern eine Waldstrasse mit Gewohnheitsrecht. Belastungen: Lärm, Sicherheit, Erschütterungen, Luftqualität. Die Einsprache wurde abgelehnt; eine Beschwerde der Stadt Biel ist hängig.',
+      quotes: [
+        { text: 'Bei uns in Mett haben wir ein anderes Problem: Industrieverkehr im Wald. […] Alle Lastwagen, die zur Kiesgrube fahren, verkehren durch den Büttenberg. Sie verkehren auf einem Waldweg und dann durch unser Quartier. Der ganze Wald wird jeden Tag von zweihundert Lastwagen befahren.', src:'IP5, Z. 54', cls:'stark' },
+        { text: 'Es ist keine offizielle Strasse, es gibt nichts, was das so erlaubt, aber es ist einfach Gewohnheit. […] Die Lastwagen verkehren an zwei Schulen vorbei. Es wird immer versprochen, dass die Kiesgrube erschöpft sei und dass es fertig sei. Aber alle dreissig Jahre wird das verlängert.', src:'IP5, Z. 56', cls:'stark' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Biel reicht Beschwerde gegen Kiesgrube-Erweiterung Büttenberg ein. Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    e13: {
+      title: 'Steuereinnahmen aus Kiesabbau',
+      role: 'Kiesgrube ↔ Gemeinde Safnern',
+      tag: 'KOOPERATION',
+      style: 'koop',
+      description: 'Kommunale Steuereinnahmen aus dem Kiesgrubenbetrieb fliessen der Gemeinde Safnern zu. Diese ökonomische Verflechtung erklärt, weshalb die Erweiterung an der Gemeindeversammlung mehrheitsfähig bleibt – und warum der Druck zur Auflösung der Verkehrssituation aus Safnern heraus gering ist.',
+      quotes: [
+        { text: 'Sie haben das Geld von der Kiesgrube, und die Lasten werden zu uns geschoben. Das fühlen die Leute als Ungerechtigkeit.', src:'IP5, Z. 56', cls:'koop' }
+      ],
+      sources: [
+        { text:'Schweizerische Depeschenagentur (2025). Blick.', url:'https://www.blick.ch/schweiz/bern/erweiterungsprojekt-biel-reicht-beschwerde-gegen-kiesgrube-erweiterung-buettenberg-ein-id20562171.html' }
+      ]
+    },
+
+    e4: {
+      title: 'Misstrauen («zerstören Natur fürs Geld»)',
+      role: 'Bevölkerung ↔ Burgergemeinde Biel',
+      tag: 'MITTLERER KONFLIKT',
+      style: 'mittel',
+      description: 'Vorwurf der Profitorientierung: Forstbetriebe – sowohl Burgergemeinde wie Staatsforst – werden von Teilen der Bevölkerung verdächtigt, mit Holzschlägen primär Geld verdienen zu wollen. Die Kritik trifft die Maschinen-Ästhetik, die Grösse der Eingriffe und das wahrgenommene Auseinanderfallen von Schutz-Rhetorik und Holznutzung.',
+      quotes: [
+        { text: 'Sobald etwas nicht mehr ins Bild passt, heisst es schnell: «Wegen Geld zerstören sie die Natur, machen Wege kaputt, schädigen den Lebensraum der Tiere.»', src:'IP3, Z. 44', cls:'mittel' },
+        { text: 'Es ist auch ein Vorwurf, dass wir mit grossen Maschinen arbeiten, um Geld zu verdienen. Dabei sind die Forstarbeiten einer der gefährlichsten Berufe; nachgewiesenermassen gilt: kein Hang am Holz, kein Fuss am Boden.', src:'IP3, Z. 26', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Ranacher, L., & Stern, T. (2016). Forest Management or Greed of Gain? Urban Forestry & Urban Greening, 15, 89–96.', url:'https://doi.org/10.1016/j.ufug.2015.11.007' },
+        { text:'Eidgenössische Forschungsanstalt WSL (2011). Der multifunktionale Wald – Konflikte.', url:'https://www.dora.lib4ri.ch/wsl/dload/wsl:13773/PDF/Eidgen%c3%b6ssische_Forschungsanstalt_WSL-2011-Der_multifunktionale_Wald_-_Konflikte-(published_version).pdf' }
+      ]
+    },
+
+    e5: {
+      title: 'Machtgefälle (Quartier vs. Gemeinde)',
+      role: 'Quartier Mett ↔ Gemeinde Safnern',
+      tag: 'MITTLERER KONFLIKT',
+      style: 'mittel',
+      description: 'Demokratie-strukturelle Asymmetrie: Eine politische Gemeinde (Safnern, ≈2 000 Einw.) entscheidet via Gemeindeversammlung über die Kiesgrube auf ihrem Gebiet. Das betroffene Quartier (Mett, ≈10 000 Einw.) hat lediglich Einsprache- und Beschwerderecht. Diese Asymmetrie verschärft die Konfliktwahrnehmung gerade dort, wo die Lasten effektiv auftreten.',
+      quotes: [
+        { text: 'Wir sind nicht so gut repräsentiert wie eine Gemeinde wie Safnern. […] Wir können nur eine Einsprache machen, und eine Einsprache ist viel schwächer als ein Ja oder Nein in einer Gemeindeabstimmung. Es ist ein Machtverhältnis.', src:'IP5, Z. 65', cls:'mittel' },
+        { text: 'Wir sind in Mett rund zehntausend Leute. Safnern hat zweitausend. Ein Sechstel oder ein Fünftel von Biel wohnt bei uns.', src:'IP5, Z. 67', cls:'mittel' }
+      ],
+      sources: [
+        { text:'Wilkes-Allemann, J., Pütz, M., & Hirschi, C. (2015). Governance of Forest Recreation in Urban Areas. Environmental Policy and Governance, 25(2), 139–156.', url:'https://doi.org/10.1002/eet.1672' }
+      ]
+    },
+
+    e6: {
+      title: '«Ihr seid zuständig!»',
+      role: 'Bevölkerung → Stadt Biel',
+      tag: 'FEHLGELEITETE KOMMUNIKATION',
+      style: 'komm',
+      description: 'Kommunikationsbruch: Beschwerden zu Holzschlägen und Waldveränderungen werden an die Stadt Biel adressiert, die aber praktisch keinen eigenen Wald besitzt und keine Steuerungskompetenz über die Bewirtschaftung hat. Die Stadt verweist regelmässig an die jeweiligen Waldeigentümer weiter. Strukturelle Wissenslücke der Bevölkerung über Eigentumsverhältnisse.',
+      quotes: [
+        { text: 'Wenn eine Anfrage bezüglich Wald an die Stadt Biel kommt, wissen viele nicht, wem der Wald gehört. Viele denken, ein Grossteil im Längholz oder auch im Beaumont gehöre der Stadt – das ist aber nicht so. Wir verweisen deshalb immer auf den jeweiligen Waldeigentümer.', src:'IP4, Z. 69', cls:'komm' },
+        { text: 'Aber kommuniziert haben sie das mit uns nie. Vielleicht mit der Stadt, aber dann leitet die Stadt das nicht an uns weiter. Ich weiss nicht, welche die Route ist, aber wir werden nicht informiert.', src:'IP5, Z. 38', cls:'komm' }
+      ],
+      sources: [
+        { text:'Wilkes-Allemann, J., Pütz, M., Hirschi, C., & Fischer, C. (2015). Conflict Situations and Response Strategies in Urban Forests in Switzerland. Scandinavian Journal of Forest Research, 30(3), 204–216.', url:'https://doi.org/10.1080/02827581.2014.1002216' }
+      ]
+    },
+
+    e7: {
+      title: 'Stadt verweist weiter → Burgergemeinde',
+      role: 'Stadt Biel → Burgergemeinde Biel',
+      tag: 'FEHLGELEITETE KOMMUNIKATION',
+      style: 'komm',
+      description: 'Strukturelle Verweiskette: Wenn die Stadt Beschwerden empfängt, leitet sie diese an die Burgergemeinde Biel als grösste Waldeigentümerin weiter. Da die Stadt keine eigenen Waldziele formuliert, gibt es keinen Filter und keine politische Mediationsfunktion zwischen Bevölkerung und Eigentümerin.',
+      quotes: [
+        { text: 'Auch der Quartierverein und die Gemeinde wurden informiert. […] Häufig können wir erst reagieren, wenn die Leute konkret bei uns vorstellig werden.', src:'IP3, Z. 57', cls:'komm' }
+      ],
+      sources: [
+        { text:'Wilkes-Allemann, J., Pütz, M., & Hirschi, C. (2015). Governance of Forest Recreation in Urban Areas. Environmental Policy and Governance.', url:'https://doi.org/10.1002/eet.1672' }
+      ]
+    },
+
+    e10: {
+      title: 'Stadt verweist weiter → Staatsforstbetrieb',
+      role: 'Stadt Biel → Staatsforstbetrieb',
+      tag: 'FEHLGELEITETE KOMMUNIKATION',
+      style: 'komm',
+      description: 'Auch Anfragen, die den Staatswald (z. B. Längholz-Anteile des Kantons) betreffen, werden über die Stadt Biel an den Staatsforstbetrieb weitergereicht. Die Stadt agiert als Verteiler ohne eigene Steuerungskompetenz.',
+      quotes: [
+        { text: 'Wir verweisen deshalb immer auf den jeweiligen Waldeigentümer. Gerade beim Längholz liegt nur wenig auf Gemeindegebiet Biel. Das heisst, häufig sind wir gar nicht zuständig und verweisen einfach weiter.', src:'IP4, Z. 69', cls:'komm' }
+      ],
+      sources: [
+        { text:'Wilkes-Allemann, J., Pütz, M., & Hirschi, C. (2015). Governance of Forest Recreation in Urban Areas. Environmental Policy and Governance.', url:'https://doi.org/10.1002/eet.1672' }
+      ]
+    },
+
+    e11: {
+      title: 'Stadt verweist weiter → Amt für Wald',
+      role: 'Stadt Biel → Amt für Wald',
+      tag: 'FEHLGELEITETE KOMMUNIKATION',
+      style: 'komm',
+      description: 'Bei regulatorischen Fragen (Rodung, Bewirtschaftungsplanung, Besucherlenkung) verweist die Stadt an das Amt für Wald des Kantons Bern. Auch hier fehlt eine eigenständige städtische Position; die Bevölkerung muss sich an mehrere Adressen wenden, um eine Antwort zu bekommen.',
+      quotes: [
+        { text: 'Beim Staatsforstbetrieb ist es ohnehin klar, weil das über den Kanton geregelt ist und der Kanton Vorschriften macht – wie viel man schlagen kann und so weiter. Aber von uns kommen keine Vorgaben.', src:'IP4, Z. 49', cls:'komm' }
+      ],
+      sources: [
+        { text:'Amt für Wald und Naturgefahren (2023). Regionaler Waldplan Seeland–Biel/Bienne.', url:'https://www.weu.be.ch/content/dam/weu/dokumente/awn/de/rwp-2/RWP-2,%20Seeland-Biel-Bienne,%20genehmigt%20und%20publiziert,%20DE.pdf' }
+      ]
+    }
+  };
+
+  // ===== RENDER PINS =====
+  function buildPins(){
+    pinsLayer.innerHTML = '';
+    Object.entries(STATE.pins).forEach(([id, def]) => {
+      const el = document.createElement('div');
+      el.className = 'pin ' + def.type;
+      el.dataset.id = id;
+      el.innerHTML = `<div class="name">${def.name}</div><div class="sub">${def.sub||''}</div>`;
+      el.style.left = def.x + '%'; el.style.top = def.y + '%';
+      el.title = 'Klicken für Beschreibung, Zitate und Quellen';
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        showActorModal(id);
+      });
+      pinsLayer.appendChild(el);
+    });
+  }
+
+  // ===== EDGES =====
+  function styleAttrs(s){
+    switch(s){
+      case 'stark':  return { stroke:'#b84538', 'stroke-width':4.5, 'stroke-opacity':.95 };
+      case 'mittel': return { stroke:'#c97a2e', 'stroke-width':3.2, 'stroke-opacity':.95 };
+      case 'komm':   return { stroke:'#d4a017', 'stroke-width':2.8, 'stroke-opacity':.95, 'stroke-dasharray':'8 5' };
+      case 'koop':   return { stroke:'#3f7a48', 'stroke-width':2.5, 'stroke-opacity':.9, 'stroke-dasharray':'8 5' };
+      default: return { stroke:'#5a6470', 'stroke-width':2 };
+    }
+  }
+  function pctToVb(p){ return { x:p.x/100*VB_W, y:p.y/100*VB_H }; }
+
+  function redrawEdges(){
+    edgesG.innerHTML = '';
+    edgesHit.innerHTML = '';
+    edgeLabelsEl.innerHTML = '';
+
+    STATE.edges.forEach(e => {
+      const pa = STATE.pins[e.from], pb = STATE.pins[e.to];
+      if(!pa || !pb) return;
+      const a = pctToVb(pa), b = pctToVb(pb);
+      const dx = b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1;
+      const nx=-dy/len, ny=dx/len;
+      const off = e.bend ? e.bend : Math.min(40, len*0.06);
+      const cx=(a.x+b.x)/2 + nx*off, cy=(a.y+b.y)/2 + ny*off;
+      const d = `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`;
+      const at = styleAttrs(e.style);
+
+      // Halo (white background under line for legibility)
+      const halo = document.createElementNS('http://www.w3.org/2000/svg','path');
+      halo.setAttribute('d',d); halo.setAttribute('fill','none');
+      halo.setAttribute('stroke','#fff'); halo.setAttribute('stroke-opacity','0.85');
+      halo.setAttribute('stroke-linecap','round');
+      halo.setAttribute('stroke-width', (parseFloat(at['stroke-width'])+3).toString());
+      edgesG.appendChild(halo);
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d', d); path.setAttribute('fill','none');
+      Object.entries(at).forEach(([k,v])=>path.setAttribute(k,v));
+      if(e.arrow) path.setAttribute('marker-end','url(#arrow-komm)');
+      edgesG.appendChild(path);
+
+      // Repeating chevrons
+      if(e.arrow){
+        const totalLen = path.getTotalLength();
+        const spacing = 80;
+        const ahColor = '#d4a017';
+        const ahSize  = 9;
+        for(let s = spacing*0.5; s < totalLen - 14; s += spacing){
+          const p1 = path.getPointAtLength(s);
+          const p2 = path.getPointAtLength(Math.min(totalLen, s + 1));
+          const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
+          const chev = document.createElementNS('http://www.w3.org/2000/svg','path');
+          chev.setAttribute('d', `M ${-ahSize} ${-ahSize*0.7} L 0 0 L ${-ahSize} ${ahSize*0.7}`);
+          chev.setAttribute('fill','none');
+          chev.setAttribute('stroke', ahColor);
+          chev.setAttribute('stroke-width','1.8');
+          chev.setAttribute('stroke-linecap','round');
+          chev.setAttribute('stroke-linejoin','round');
+          chev.setAttribute('transform', `translate(${p1.x} ${p1.y}) rotate(${ang})`);
+          chev.setAttribute('opacity','0.95');
+          edgesG.appendChild(chev);
+        }
+      }
+
+      // Hit area
+      const hit = document.createElementNS('http://www.w3.org/2000/svg','path');
+      hit.setAttribute('d', d); hit.setAttribute('fill','none');
+      hit.setAttribute('stroke','rgba(0,0,0,0.001)');
+      hit.setAttribute('stroke-width','16'); hit.setAttribute('class','edge-hit');
+      hit.addEventListener('click', ev => { ev.stopPropagation(); showEdgeModal(e.id); });
+      edgesHit.appendChild(hit);
+
+      // Label at midpoint of curve
+      const mx = (a.x+2*cx+b.x)/4, my=(a.y+2*cy+b.y)/4;
+      const lab = document.createElement('div');
+      const cls = e.style==='stark'?'stark':e.style==='mittel'?'mittel':e.style==='koop'?'koop':'komm';
+      lab.className = 'edge-label '+cls+(e.italic?' italic':'');
+      lab.style.left = mx/VB_W*100+'%'; lab.style.top = my/VB_H*100+'%';
+      lab.textContent = e.label;
+      lab.title = 'Klicken für Beschreibung, Zitate und Quellen';
+      lab.addEventListener('click', ev => { ev.stopPropagation(); showEdgeModal(e.id); });
+      edgeLabelsEl.appendChild(lab);
+    });
+  }
+
+  // ===== ZONES =====
+  function drawZones(){
+    zonesSvg.innerHTML = '';
+    zonesLayer.innerHTML = '';
+    Object.entries(STATE.zones).forEach(([id, z]) => {
+      const ell = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+      ell.setAttribute('cx', z.cx/100*VB_W); ell.setAttribute('cy', z.cy/100*VB_H);
+      ell.setAttribute('rx', z.rx/100*VB_W); ell.setAttribute('ry', z.ry/100*VB_H);
+      ell.setAttribute('fill','#1a3a6e'); ell.setAttribute('fill-opacity','0.07');
+      ell.setAttribute('stroke','#1a3a6e'); ell.setAttribute('stroke-opacity','.55');
+      ell.setAttribute('stroke-width','1.5'); ell.setAttribute('stroke-dasharray','7 5');
+      zonesSvg.appendChild(ell);
+
+      const lab = document.createElement('div'); lab.className='zone-label';
+      lab.style.left=z.lx+'%'; lab.style.top=z.ly+'%';
+      lab.innerHTML = '<span>'+z.title+'</span><span class="sub">'+z.sub+'</span>';
+      zonesLayer.appendChild(lab);
+    });
+  }
+
+  // ===== MODAL =====
+  const modal = document.getElementById('modal');
+  const modalCard = document.getElementById('modal-card');
+  const modalTag = document.getElementById('modal-tag');
+  const modalTitle = document.getElementById('modal-title');
+  const modalRole = document.getElementById('modal-role');
+  const modalBadges = document.getElementById('modal-badges');
+  const modalBody = document.getElementById('modal-body');
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  modal.addEventListener('click', e => { if(e.target === modal) closeModal(); });
+  document.addEventListener('keydown', e => { if(e.key === 'Escape') closeModal(); });
+
+  function escapeHTML(s){
+    return String(s).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function renderModal(info){
+    modalTag.textContent = info.tag || '';
+    modalTitle.textContent = info.title || '';
+    modalRole.textContent = info.role || '';
+    modalBadges.innerHTML = '';
+    if(info.style){
+      const b = document.createElement('span');
+      b.className = 'badge ' + info.style;
+      b.textContent = info.tag || info.style.toUpperCase();
+      modalBadges.appendChild(b);
+    }
+    let html = '';
+    if(info.description){
+      html += '<h3>Beschreibung</h3>';
+      html += '<p>' + escapeHTML(info.description) + '</p>';
+    }
+    if(info.quotes && info.quotes.length){
+      html += '<h3>Originalzitate</h3>';
+      info.quotes.forEach(q => {
+        const cls = q.cls || 'neutral';
+        html += '<div class="quote ' + cls + '">«' + escapeHTML(q.text) + '»<span class="src">' + escapeHTML(q.src) + '</span></div>';
+      });
+    }
+    if(info.sources && info.sources.length){
+      html += '<h3>Quellen</h3>';
+      html += '<ul class="sources">';
+      info.sources.forEach(s => {
+        if(s.url){
+          html += '<li>' + escapeHTML(s.text) + ' <a href="' + s.url + '" target="_blank" rel="noopener noreferrer">' + s.url + '</a></li>';
+        } else {
+          html += '<li>' + escapeHTML(s.text) + '</li>';
+        }
+      });
+      html += '</ul>';
+    }
+    if(info.note){
+      html += '<div class="note">' + escapeHTML(info.note) + '</div>';
+    }
+    modalBody.innerHTML = html;
+    modal.classList.add('show');
+    modalCard.scrollTop = 0;
+    modal.focus();
+  }
+  function closeModal(){ modal.classList.remove('show'); }
+  function showActorModal(id){
+    const info = ACTOR_INFO[id];
+    if(!info) return;
+    renderModal(info);
+  }
+  function showEdgeModal(id){
+    const info = EDGE_INFO[id];
+    if(!info) return;
+    renderModal(info);
+  }
+
+  // ===== INIT =====
+  buildPins();
+  drawZones();
+  redrawEdges();
+  window.addEventListener('resize', ()=>{ redrawEdges(); });
+})();
+</script>
+</body>
+</html>
